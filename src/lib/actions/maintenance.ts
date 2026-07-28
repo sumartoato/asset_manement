@@ -37,7 +37,7 @@ export async function createMaintenanceSchedule(formData: FormData) {
   }
   const data = result.data;
 
-  const schedule = await prisma.maintenanceSchedule.create({
+  await prisma.maintenanceSchedule.create({
     data: {
       assetId: data.assetId,
       type: data.type,
