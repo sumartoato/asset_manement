@@ -37,7 +37,7 @@ export async function createMaintenanceSchedule(formData: FormData) {
   }
   const data = result.data;
 
-  const schedule = await prisma.maintenanceSchedule.create({
+  await prisma.maintenanceSchedule.create({
     data: {
       assetId: data.assetId,
       type: data.type,
@@ -50,7 +50,6 @@ export async function createMaintenanceSchedule(formData: FormData) {
 
   revalidatePath("/maintenance");
   redirect(`/maintenance?tab=schedules`);
-  return schedule;
 }
 
 export async function cancelMaintenanceSchedule(id: string) {
@@ -104,7 +103,6 @@ export async function createWorkOrder(formData: FormData) {
 
   revalidatePath("/maintenance");
   redirect(`/maintenance/work-orders/${workOrder.id}`);
-  return workOrder;
 }
 
 export async function updateChecklist(workOrderId: string, formData: FormData) {
@@ -224,12 +222,11 @@ export async function completeWorkOrder(workOrderId: string) {
 }
 
 export async function cancelWorkOrder(workOrderId: string) {
-  const workOrder = await prisma.workOrder.update({
+  await prisma.workOrder.update({
     where: { id: workOrderId },
     data: { status: "CANCELLED" },
   });
 
   revalidatePath("/maintenance");
   revalidatePath(`/maintenance/work-orders/${workOrderId}`);
-  return workOrder;
 }
