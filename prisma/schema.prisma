@@ -1,0 +1,669 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ------------------------------------------------------------------
+// User & Security
+// ------------------------------------------------------------------
+
+enum RoleName {
+  ADMIN
+  MANAGER
+  STAFF
+  AUDITOR
+}
+
+model User {
+  id           String      @id @default(cuid())
+  name         String
+  email        String      @unique
+  passwordHash String
+  role         RoleName    @default(STAFF)
+  isActive     Boolean     @default(true)
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  employee             Employee?
+  assetsCreated        Asset[]               @relation("AssetCreatedBy")
+  purchaseRequests     PurchaseRequest[]     @relation("PRRequestedBy")
+  approvals            Approval[]            @relation("ApprovalActor")
+  auditLogs            AuditLog[]
+  workOrdersAssigned   WorkOrder[]           @relation("WorkOrderAssignedTo")
+  maintenanceRequested MaintenanceSchedule[] @relation("MaintenanceCreatedBy")
+}
+
+model Department {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  code      String   @unique
+  createdAt DateTime @default(now())
+
+  users       User[]
+  employees   Employee[]
+  assets      Asset[]      @relation("AssetDepartment")
+  allocations Allocation[] @relation("AllocationDepartment")
+}
+
+model Employee {
+  id           String      @id @default(cuid())
+  employeeCode String      @unique
+  name         String
+  email        String?     @unique
+  phone        String?
+  position     String?
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  userId       String?     @unique
+  user         User?       @relation(fields: [userId], references: [id])
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+
+  allocations Allocation[] @relation("AllocationEmployee")
+}
+
+model Branch {
+  id      String  @id @default(cuid())
+  name    String  @unique
+  address String?
+
+  locations   Location[]
+  allocations Allocation[] @relation("AllocationBranch")
+}
+
+model Location {
+  id        String   @id @default(cuid())
+  name      String
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+  building  String?
+  floor     String?
+  room      String?
+  createdAt DateTime @default(now())
+
+  assets    Asset[]
+  movements MovementHistory[] @relation("MovementToLocation")
+}
+
+model Project {
+  id        String    @id @default(cuid())
+  name      String
+  code      String    @unique
+  startDate DateTime?
+  endDate   DateTime?
+  status    String    @default("ACTIVE")
+
+  allocations Allocation[] @relation("AllocationProject")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
+
+// ------------------------------------------------------------------
+// Master Asset
+// ------------------------------------------------------------------
+
+model AssetCategory {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  code            String   @unique
+  usefulLifeYears Int      @default(5)
+  createdAt       DateTime @default(now())
+
+  types  AssetType[]
+  assets Asset[]
+}
+
+model AssetType {
+  id         String        @id @default(cuid())
+  name       String
+  categoryId String
+  category   AssetCategory @relation(fields: [categoryId], references: [id])
+
+  assets Asset[]
+
+  @@unique([categoryId, name])
+}
+
+model Brand {
+  id   String @id @default(cuid())
+  name String @unique
+
+  assets Asset[]
+}
+
+model Vendor {
+  id          String   @id @default(cuid())
+  name        String
+  code        String   @unique
+  contactName String?
+  email       String?
+  phone       String?
+  address     String?
+  createdAt   DateTime @default(now())
+
+  purchaseOrders PurchaseOrder[]
+  contracts      VendorContract[]
+  assets         Asset[]          @relation("AssetVendor")
+  workOrders     WorkOrder[]      @relation("WorkOrderVendor")
+}
+
+enum AssetStatus {
+  ACTIVE
+  IN_STORAGE
+  UNDER_MAINTENANCE
+  DAMAGED
+  LOST
+  DISPOSED
+  BORROWED
+}
+
+enum AssetCondition {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+  DAMAGED
+}
+
+model Asset {
+  id            String         @id @default(cuid())
+  assetCode     String         @unique
+  name          String
+  categoryId    String
+  category      AssetCategory  @relation(fields: [categoryId], references: [id])
+  typeId        String?
+  type          AssetType?     @relation(fields: [typeId], references: [id])
+  brandId       String?
+  brand         Brand?         @relation(fields: [brandId], references: [id])
+  model         String?
+  serialNumber  String?        @unique
+  barcode       String?        @unique
+  status        AssetStatus    @default(ACTIVE)
+  condition     AssetCondition @default(GOOD)
+  specification String?
+  photoUrl      String?
+
+  // Purchase info
+  vendorId      String?
+  vendor        Vendor?   @relation("AssetVendor", fields: [vendorId], references: [id])
+  purchaseDate  DateTime?
+  purchaseCost  Decimal?  @db.Decimal(18, 2)
+  invoiceNumber String?
+
+  // Warranty
+  warrantyStart DateTime?
+  warrantyEnd   DateTime?
+  warrantyNotes String?
+
+  // Depreciation
+  depreciationMethod DepreciationMethod @default(STRAIGHT_LINE)
+  usefulLifeYears    Int?
+  salvageValue       Decimal?           @db.Decimal(18, 2)
+
+  // Location & ownership
+  locationId   String?
+  location     Location?   @relation(fields: [locationId], references: [id])
+  departmentId String?
+  department   Department? @relation("AssetDepartment", fields: [departmentId], references: [id])
+
+  createdById String?
+  createdBy   User?    @relation("AssetCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  documents            AssetDocument[]
+  allocations          Allocation[]
+  movements            MovementHistory[]
+  maintenanceSchedules MaintenanceSchedule[]
+  workOrders           WorkOrder[]
+  inspections          Inspection[]
+  depreciationEntries  DepreciationEntry[]
+  disposal             Disposal?
+  goodsReceiptItems    GoodsReceiptItem[]
+  auditItems           StockOpnameItem[]
+  warrantyRecords      Warranty[]
+
+  @@index([status])
+  @@index([categoryId])
+}
+
+model AssetDocument {
+  id         String   @id @default(cuid())
+  assetId    String
+  asset      Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  name       String
+  fileUrl    String
+  type       String   @default("OTHER") // INVOICE, WARRANTY, MANUAL, PHOTO, OTHER
+  uploadedAt DateTime @default(now())
+}
+
+// ------------------------------------------------------------------
+// Asset Procurement
+// ------------------------------------------------------------------
+
+enum ApprovalStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model PurchaseRequest {
+  id            String         @id @default(cuid())
+  requestNumber String         @unique
+  requestedById String
+  requestedBy   User           @relation("PRRequestedBy", fields: [requestedById], references: [id])
+  title         String
+  justification String?
+  status        ApprovalStatus @default(DRAFT)
+  neededDate    DateTime?
+  createdAt     DateTime       @default(now())
+
+  items          PurchaseRequestItem[]
+  approvals      Approval[]
+  purchaseOrders PurchaseOrder[]
+}
+
+model PurchaseRequestItem {
+  id                String          @id @default(cuid())
+  purchaseRequestId String
+  purchaseRequest   PurchaseRequest @relation(fields: [purchaseRequestId], references: [id], onDelete: Cascade)
+  description       String
+  categoryId        String?
+  quantity          Int             @default(1)
+  estimatedUnitCost Decimal?        @db.Decimal(18, 2)
+}
+
+model PurchaseOrder {
+  id                String           @id @default(cuid())
+  poNumber          String           @unique
+  purchaseRequestId String?
+  purchaseRequest   PurchaseRequest? @relation(fields: [purchaseRequestId], references: [id])
+  vendorId          String
+  vendor            Vendor           @relation(fields: [vendorId], references: [id])
+  status            ApprovalStatus   @default(DRAFT)
+  orderDate         DateTime         @default(now())
+  expectedDate      DateTime?
+  totalAmount       Decimal          @default(0) @db.Decimal(18, 2)
+  notes             String?
+  createdAt         DateTime         @default(now())
+
+  items         PurchaseOrderItem[]
+  approvals     Approval[]
+  goodsReceipts GoodsReceipt[]
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  description     String
+  categoryId      String?
+  quantity        Int           @default(1)
+  unitCost        Decimal       @db.Decimal(18, 2)
+
+  goodsReceiptItems GoodsReceiptItem[]
+}
+
+model GoodsReceipt {
+  id              String        @id @default(cuid())
+  grNumber        String        @unique
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  receivedDate    DateTime      @default(now())
+  invoiceFileUrl  String?
+  notes           String?
+  createdAt       DateTime      @default(now())
+
+  items GoodsReceiptItem[]
+}
+
+model GoodsReceiptItem {
+  id                  String            @id @default(cuid())
+  goodsReceiptId      String
+  goodsReceipt        GoodsReceipt      @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  purchaseOrderItemId String
+  purchaseOrderItem   PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
+  quantityReceived    Int
+  assetId             String?
+  asset               Asset?            @relation(fields: [assetId], references: [id])
+}
+
+// ------------------------------------------------------------------
+// Approval Workflow (generic)
+// ------------------------------------------------------------------
+
+enum ApprovalEntityType {
+  PURCHASE_REQUEST
+  PURCHASE_ORDER
+  ASSET_TRANSFER
+  MAINTENANCE
+  DISPOSAL
+  ASSET_REGISTRATION
+}
+
+model Approval {
+  id         String             @id @default(cuid())
+  entityType ApprovalEntityType
+  level      Int                @default(1)
+  status     ApprovalStatus     @default(PENDING)
+  actorId    String?
+  actor      User?              @relation("ApprovalActor", fields: [actorId], references: [id])
+  comments   String?
+  decidedAt  DateTime?
+  createdAt  DateTime           @default(now())
+
+  purchaseRequestId String?
+  purchaseRequest   PurchaseRequest? @relation(fields: [purchaseRequestId], references: [id])
+  purchaseOrderId   String?
+  purchaseOrder     PurchaseOrder?   @relation(fields: [purchaseOrderId], references: [id])
+  allocationId      String?
+  allocation        Allocation?      @relation(fields: [allocationId], references: [id])
+  disposalId        String?
+  disposal          Disposal?        @relation(fields: [disposalId], references: [id])
+  workOrderId       String?
+  workOrder         WorkOrder?       @relation(fields: [workOrderId], references: [id])
+}
+
+// ------------------------------------------------------------------
+// Asset Allocation
+// ------------------------------------------------------------------
+
+enum AllocationType {
+  ASSIGN
+  TRANSFER
+  BORROW
+  RETURN
+}
+
+enum AllocationStatus {
+  PENDING
+  ACTIVE
+  RETURNED
+  REJECTED
+}
+
+model Allocation {
+  id      String           @id @default(cuid())
+  assetId String
+  asset   Asset            @relation(fields: [assetId], references: [id])
+  type    AllocationType
+  status  AllocationStatus @default(PENDING)
+
+  employeeId   String?
+  employee     Employee?   @relation("AllocationEmployee", fields: [employeeId], references: [id])
+  departmentId String?
+  department   Department? @relation("AllocationDepartment", fields: [departmentId], references: [id])
+  projectId    String?
+  project      Project?    @relation("AllocationProject", fields: [projectId], references: [id])
+  branchId     String?
+  branch       Branch?     @relation("AllocationBranch", fields: [branchId], references: [id])
+
+  assignedDate DateTime  @default(now())
+  dueDate      DateTime?
+  returnedDate DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+
+  approvals Approval[]
+}
+
+// ------------------------------------------------------------------
+// Asset Tracking
+// ------------------------------------------------------------------
+
+enum MovementType {
+  CHECK_IN
+  CHECK_OUT
+  TRANSFER
+  ALLOCATION
+  RETURN
+  MAINTENANCE
+  DISPOSAL
+}
+
+model MovementHistory {
+  id             String       @id @default(cuid())
+  assetId        String
+  asset          Asset        @relation(fields: [assetId], references: [id])
+  type           MovementType
+  fromLocationId String?
+  toLocationId   String?
+  toLocation     Location?    @relation("MovementToLocation", fields: [toLocationId], references: [id])
+  latitude       Float?
+  longitude      Float?
+  notes          String?
+  movedAt        DateTime     @default(now())
+}
+
+// ------------------------------------------------------------------
+// Asset Maintenance
+// ------------------------------------------------------------------
+
+enum MaintenanceType {
+  PREVENTIVE
+  CORRECTIVE
+}
+
+enum MaintenanceStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model MaintenanceSchedule {
+  id            String            @id @default(cuid())
+  assetId       String
+  asset         Asset             @relation(fields: [assetId], references: [id])
+  type          MaintenanceType   @default(PREVENTIVE)
+  title         String
+  frequencyDays Int?
+  scheduledDate DateTime
+  status        MaintenanceStatus @default(SCHEDULED)
+  createdById   String?
+  createdBy     User?             @relation("MaintenanceCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now())
+
+  workOrders WorkOrder[]
+}
+
+enum WorkOrderPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model WorkOrder {
+  id                    String               @id @default(cuid())
+  woNumber              String               @unique
+  assetId               String
+  asset                 Asset                @relation(fields: [assetId], references: [id])
+  maintenanceScheduleId String?
+  maintenanceSchedule   MaintenanceSchedule? @relation(fields: [maintenanceScheduleId], references: [id])
+  type                  MaintenanceType      @default(CORRECTIVE)
+  priority              WorkOrderPriority    @default(MEDIUM)
+  status                MaintenanceStatus    @default(SCHEDULED)
+  description           String
+  assignedToId          String?
+  assignedTo            User?                @relation("WorkOrderAssignedTo", fields: [assignedToId], references: [id])
+  vendorId              String?
+  vendor                Vendor?              @relation("WorkOrderVendor", fields: [vendorId], references: [id])
+  startDate             DateTime?
+  completedDate         DateTime?
+  laborCost             Decimal              @default(0) @db.Decimal(18, 2)
+  partsCost             Decimal              @default(0) @db.Decimal(18, 2)
+  totalCost             Decimal              @default(0) @db.Decimal(18, 2)
+  checklist             Json?
+  createdAt             DateTime             @default(now())
+
+  spareParts SparePartUsage[]
+  approvals  Approval[]
+}
+
+model SparePartUsage {
+  id          String    @id @default(cuid())
+  workOrderId String
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  partName    String
+  quantity    Int       @default(1)
+  unitCost    Decimal   @default(0) @db.Decimal(18, 2)
+}
+
+// ------------------------------------------------------------------
+// Asset Inspection
+// ------------------------------------------------------------------
+
+enum InspectionStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+}
+
+model Inspection {
+  id               String           @id @default(cuid())
+  assetId          String
+  asset            Asset            @relation(fields: [assetId], references: [id])
+  scheduledDate    DateTime
+  completedDate    DateTime?
+  status           InspectionStatus @default(SCHEDULED)
+  checklist        Json?
+  conditionFound   AssetCondition?
+  findings         String?
+  correctiveAction String?
+  photoUrls        String[]
+  approved         Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+}
+
+// ------------------------------------------------------------------
+// Asset Depreciation
+// ------------------------------------------------------------------
+
+enum DepreciationMethod {
+  STRAIGHT_LINE
+  DECLINING_BALANCE
+}
+
+model DepreciationEntry {
+  id             String   @id @default(cuid())
+  assetId        String
+  asset          Asset    @relation(fields: [assetId], references: [id])
+  period         DateTime // first day of the month this entry represents
+  amount         Decimal  @db.Decimal(18, 2)
+  bookValueStart Decimal  @db.Decimal(18, 2)
+  bookValueEnd   Decimal  @db.Decimal(18, 2)
+  createdAt      DateTime @default(now())
+
+  @@unique([assetId, period])
+}
+
+// ------------------------------------------------------------------
+// Asset Inventory Audit (Stock Opname)
+// ------------------------------------------------------------------
+
+enum StockOpnameStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+}
+
+model StockOpname {
+  id        String            @id @default(cuid())
+  code      String            @unique
+  title     String
+  status    StockOpnameStatus @default(DRAFT)
+  startDate DateTime          @default(now())
+  endDate   DateTime?
+  createdAt DateTime          @default(now())
+
+  items StockOpnameItem[]
+}
+
+model StockOpnameItem {
+  id                 String      @id @default(cuid())
+  stockOpnameId      String
+  stockOpname        StockOpname @relation(fields: [stockOpnameId], references: [id], onDelete: Cascade)
+  assetId            String?
+  asset              Asset?      @relation(fields: [assetId], references: [id])
+  expectedLocationId String?
+  foundLocationId    String?
+  found              Boolean     @default(false)
+  isUnexpected       Boolean     @default(false)
+  notes              String?
+  scannedAt          DateTime?
+}
+
+// ------------------------------------------------------------------
+// Warranty & Contract
+// ------------------------------------------------------------------
+
+model Warranty {
+  id        String   @id @default(cuid())
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id])
+  provider  String
+  startDate DateTime
+  endDate   DateTime
+  terms     String?
+  createdAt DateTime @default(now())
+}
+
+model VendorContract {
+  id             String   @id @default(cuid())
+  vendorId       String
+  vendor         Vendor   @relation(fields: [vendorId], references: [id])
+  contractNumber String   @unique
+  title          String
+  startDate      DateTime
+  endDate        DateTime
+  slaDetails     String?
+  value          Decimal? @db.Decimal(18, 2)
+  createdAt      DateTime @default(now())
+}
+
+// ------------------------------------------------------------------
+// Asset Disposal
+// ------------------------------------------------------------------
+
+enum DisposalMethod {
+  RETIREMENT
+  SALE
+  DONATION
+  SCRAP
+}
+
+model Disposal {
+  id                  String         @id @default(cuid())
+  assetId             String         @unique
+  asset               Asset          @relation(fields: [assetId], references: [id])
+  method              DisposalMethod
+  status              ApprovalStatus @default(DRAFT)
+  reason              String?
+  disposalDate        DateTime       @default(now())
+  saleAmount          Decimal?       @db.Decimal(18, 2)
+  bookValueAtDisposal Decimal?       @db.Decimal(18, 2)
+  gainLoss            Decimal?       @db.Decimal(18, 2)
+  documentUrl         String?
+  createdAt           DateTime       @default(now())
+
+  approvals Approval[]
+}
